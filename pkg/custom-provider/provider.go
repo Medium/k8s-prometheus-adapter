@@ -122,6 +122,14 @@ func (p *prometheusProvider) buildQuery(info provider.CustomMetricInfo, namespac
 		return nil, provider.NewMetricNotFoundError(info.GroupResource, info.Metric)
 	}
 
+	glog.V(2).Infof(
+		"Querying Prometheus for %s %s (ns: %s): %s",
+		info.GroupResource.String(),
+		info.Metric,
+		namespace,
+		string(query),
+	)
+
 	// TODO: use an actual context
 	queryResults, err := p.promClient.Query(context.TODO(), pmodel.Now(), query)
 	if err != nil {
