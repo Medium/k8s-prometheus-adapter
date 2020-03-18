@@ -1,10 +1,10 @@
 REGISTRY?=directxman12
 IMAGE?=k8s-prometheus-adapter
-TEMP_DIR:=$(shell mktemp -d)
 ARCH?=amd64
 ALL_ARCH=amd64 arm arm64 ppc64le s390x
 ML_PLATFORMS=linux/amd64,linux/arm,linux/arm64,linux/ppc64le,linux/s390x
 OUT_DIR?=./_output
+DOCKER_BUILD_DIR?=$(OUT_DIR)/docker
 VENDOR_DOCKERIZED=0
 
 VERSION?=latest
@@ -35,31 +35,35 @@ $(OUT_DIR)/%/adapter: $(src_deps)
 	CGO_ENABLED=0 GOARCH=$* go build -tags netgo -o $(OUT_DIR)/$*/adapter github.com/directxman12/k8s-prometheus-adapter/cmd/adapter
 	
 docker-build:
-	cp deploy/Dockerfile $(TEMP_DIR)
-	cd $(TEMP_DIR) && sed -i "s|BASEIMAGE|$(BASEIMAGE)|g" Dockerfile
+	mkdir -p $(DOCKER_BUILD_DIR)
+	sed -e "s|BASEIMAGE|$(BASEIMAGE)|g" deploy/Dockerfile > $(DOCKER_BUILD_DIR)/Dockerfile
 
-	docker run -it -v $(TEMP_DIR):/build -v $(shell pwd):/go/src/github.com/directxman12/k8s-prometheus-adapter -e GOARCH=$(ARCH) $(GOIMAGE) /bin/bash -c "\
+	cd $(DOCKER_BUILD_DIR)
+	docker run -it -v $(shell realpath $(DOCKER_BUILD_DIR)):/build -v $(shell pwd):/go/src/github.com/directxman12/k8s-prometheus-adapter -e GOARCH=$(ARCH) $(GOIMAGE) /bin/bash -c "\
 		CGO_ENABLED=0 go build -tags netgo -o /build/adapter github.com/directxman12/k8s-prometheus-adapter/cmd/adapter"
 
-	docker build -t $(REGISTRY)/$(IMAGE)-$(ARCH):$(VERSION) $(TEMP_DIR)
-	rm -rf $(TEMP_DIR)
+	docker build -t $(REGISTRY)/$(IMAGE)-$(ARCH):$(VERSION) $(DOCKER_BUILD_DIR)
+	rm -rf $(DOCKER_BUILD_DIR)
 
 build-local-image: $(OUT_DIR)/$(ARCH)/adapter
-	cp deploy/Dockerfile $(TEMP_DIR)
-	cp  $(OUT_DIR)/$(ARCH)/adapter $(TEMP_DIR)
-	cd $(TEMP_DIR) && sed -i "s|BASEIMAGE|scratch|g" Dockerfile
-	docker build -t $(REGISTRY)/$(IMAGE)-$(ARCH):$(VERSION) $(TEMP_DIR)
-	rm -rf $(TEMP_DIR)
+	mkdir -p $(DOCKER_BUILD_DIR)
+	cp deploy/Dockerfile $(DOCKER_BUILD_DIR)
+	cp  $(OUT_DIR)/$(ARCH)/adapter $(DOCKER_BUILD_DIR)
+	sed -e "s|BASEIMAGE|$(BASEIMAGE)|g" deploy/Dockerfile > $(DOCKER_BUILD_DIR)/Dockerfile
+
+	cd $(DOCKER_BUILD_DIR)
+	docker build -t $(REGISTRY)/$(IMAGE)-$(ARCH):$(VERSION) $(DOCKER_BUILD_DIR)
+	rm -rf $(DOCKER_BUILD_DIR)
 
 push-%:
-	$(MAKE) ARCH=$* docker-build
+	$(MAKE) ARCH=$* REGISTRY=$(REGISTRY) IMAGE=$(IMAGE) VERSION=$(VERSION) docker-build
 	docker push $(REGISTRY)/$(IMAGE)-$*:$(VERSION)
 
 push: ./manifest-tool $(addprefix push-,$(ALL_ARCH))
 	./manifest-tool push from-args --platforms $(ML_PLATFORMS) --template $(REGISTRY)/$(IMAGE)-ARCH:$(VERSION) --target $(REGISTRY)/$(IMAGE):$(VERSION)
 
 ./manifest-tool:
-	curl -sSL https://github.com/estesp/manifest-tool/releases/download/v0.5.0/manifest-tool-linux-amd64 > manifest-tool
+	curl -sSL https://github.com/estesp/manifest-tool/releases/download/v0.5.0/manifest-tool-$(shell go env GOOS)-$(shell go env GOARCH) > manifest-tool
 	chmod +x manifest-tool
 
 vendor: Gopkg.lock
